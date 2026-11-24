@@ -1,0 +1,79 @@
+#!/bin/sh
+# S98lddmodules - load/unload scull, faulty and hello
+
+mode="664"
+
+# Group for the device nodes: staff if present, otherwise root
+if grep -q '^staff:' /etc/group; then
+    group="staff"
+else
+    group="root"
+fi
+
+# Prints the major number of a device from /proc/devices
+get_major() {
+    awk -v m="$1" '$2 == m {print $1}' /proc/devices
+}
+
+# Creates a node and sets group and mode: make_node <name> <major> <minor>
+make_node() {
+    rm -f "/dev/$1"
+    mknod "/dev/$1" c "$2" "$3"
+    chgrp "$group" "/dev/$1"
+    chmod "$mode" "/dev/$1"
+}
+
+case "$1" in
+    start)
+        echo "Loading ldd modules"
+
+        # ---- scull ----
+        modprobe scull || exit 1
+        major=$(get_major scull)
+        if [ -z "$major" ]; then
+            echo "scull: no major number found"
+            exit 1
+        fi
+
+        for i in 0 1 2 3; do
+            make_node "scull$i" "$major" "$i"
+            make_node "scullpipe$i" "$major" "$((i + 4))"
+        done
+        ln -sf scull0 /dev/scull
+        ln -sf scullpipe0 /dev/scullpipe
+        make_node scullsingle "$major" 8
+        make_node sculluid "$major" 9
+        make_node scullwuid "$major" 10
+        make_node scullpriv "$major" 11
+
+        # ---- faulty ----
+        modprobe faulty || exit 1
+        major=$(get_major faulty)
+        if [ -n "$major" ]; then
+            make_node faulty "$major" 0
+        fi
+
+        # ---- hello ----
+        modprobe hello || exit 1
+        ;;
+
+    stop)
+        echo "Unloading ldd modules"
+
+        rmmod hello
+        rmmod faulty
+        rm -f /dev/faulty
+
+        rmmod scull
+        rm -f /dev/scull /dev/scullpipe
+        rm -f /dev/scull[0-3] /dev/scullpipe[0-3]
+        rm -f /dev/scullsingle /dev/sculluid /dev/scullwuid /dev/scullpriv
+        ;;
+
+    *)
+        echo "Usage: $0 {start|stop}"
+        exit 1
+        ;;
+esac
+
+exit 0
